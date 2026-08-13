@@ -1,42 +1,231 @@
 {% extends "base.html" %}
-{% block title %}NetPulse — Broadband Platform{% endblock %}
+{% block title %}NetPulse — Ultra-Fast Fiber Broadband & 24/7 Customer Care{% endblock %}
+{% block container_class %}container-fluid p-0{% endblock %}
 {% block content %}
-<div class="hero">
-    <div class="row align-items-center">
-        <div class="col-lg-8">
-            <h1 class="mb-3">NetPulse Revenue &amp; Subscription Intelligence</h1>
-            <p class="mb-4">Empowering broadband operations with automated customer management, usage-based recommendations, and real-time revenue analytics.</p>
-            {% if not current_user.role %}
-            <div class="d-flex gap-3">
-                <a href="{{ url_for('login') }}" class="btn btn-signal btn-lg">Sign In to Portal</a>
-                <a href="{{ url_for('register') }}" class="btn btn-outline-light btn-lg">Create Account</a>
+
+<!-- Hero Section (Clean 28px Rounded Corner Showcase Card) -->
+<div class="hero-container">
+    <div class="hero">
+        <div class="row align-items-center g-4">
+            <div class="col-lg-7">
+                <span class="hero-pill-badge mb-3">
+                    ⚡ Next-Generation Fiber Broadband
+                </span>
+                <h1 class="display-4 fw-extrabold mb-3">Ultra-Fast Fiber Internet Powered by NetPulse</h1>
+                <p class="lead mb-4">
+                    Experience uninterrupted high-speed broadband up to 300 Mbps, 99.9% network uptime guarantee, instant online renewal, and 24/7 dedicated customer care.
+                </p>
+                <div class="d-flex flex-wrap gap-3 align-items-center mb-4">
+                    {% if not current_user.role %}
+                        <a href="{{ url_for('register') }}" class="btn btn-signal btn-lg px-4 py-3 fs-6">
+                            🚀 Get Started / Register Account
+                        </a>
+                        <a href="{{ url_for('login') }}" class="btn btn-outline-light btn-lg px-4 py-3 fs-6">
+                            Sign In to Customer Portal
+                        </a>
+                    {% else %}
+                        {% if current_user.role == 'customer' %}
+                            <a href="{{ url_for('customer_view', customer_id=session.get('customer_id')) }}" class="btn btn-signal btn-lg px-4">
+                                Go to My Customer Portal &rarr;
+                            </a>
+                        {% elif current_user.role == 'staff' %}
+                            <a href="{{ url_for('expiry_list') }}" class="btn btn-signal btn-lg px-4">
+                                Go to Follow-up Queue &rarr;
+                            </a>
+                        {% elif current_user.role == 'admin' %}
+                            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-signal btn-lg px-4">
+                                Go to Admin Dashboard &rarr;
+                            </a>
+                        {% endif %}
+                    {% endif %}
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 pt-2 border-top border-white border-opacity-10">
+                    <span class="hero-check-item">✓ 99.9% Uptime Guarantee</span>
+                    <span class="hero-check-item">✓ Unlimited Buffer-Free Data</span>
+                    <span class="hero-check-item">✓ 24/7 Call &amp; Message Support</span>
+                </div>
             </div>
-            {% endif %}
+            <div class="col-lg-5 text-center">
+                <div class="hero-glass-card">
+                    <div class="fs-1 mb-3">📡 ⚡ 🔒</div>
+                    <h4 class="text-white font-outfit mb-2">NetPulse Smart Fiber Network</h4>
+                    <p class="small text-white-50 mb-4">Instant automated renewals, zero lag streaming, and AI usage insights built right into your portal.</p>
+                    <div>
+                        <a href="#plans" class="btn btn-light w-100 py-2 font-outfit fw-bold text-dark shadow-sm">View Broadband Plans &rarr;</a>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
-<div class="row g-4">
-    <div class="col-md-4">
-        <a href="{{ url_for('customer_view', customer_id=1) }}" class="role-card">
-            <span class="tag">Customer View</span>
-            <h4 class="mt-2 mb-2">Customer Portal</h4>
-            <p class="text-muted small mb-0">View subscription details, data usage, upgrade/downgrade suggestions, and pay/renew online.</p>
-        </a>
-    </div>
-    <div class="col-md-4">
-        <a href="{{ url_for('expiry_list') }}" class="role-card">
-            <span class="tag">Staff View</span>
-            <h4 class="mt-2 mb-2">Follow-up Queue</h4>
-            <p class="text-muted small mb-0">Track connections expiring in the next 7 days, dispatch email alerts, and log customer interactions.</p>
-        </a>
-    </div>
-    <div class="col-md-4">
-        <a href="{{ url_for('admin_dashboard') }}" class="role-card">
-            <span class="tag">Admin View</span>
-            <h4 class="mt-2 mb-2">Executive Dashboard</h4>
-            <p class="text-muted small mb-0">Monitor total revenue, subscriber distribution, payment recovery rate, and usage intelligence.</p>
-        </a>
-    </div>
+<!-- Main Centered Content Container -->
+<div class="container py-5">
+
+    <!-- About Us Section -->
+    <section id="about" class="pt-4 mb-5">
+        <div class="text-center max-w-700 mx-auto mb-5">
+            <span class="tag">About NetPulse</span>
+            <h2 class="display-6 font-outfit mt-2 mb-3">Empowering Your Digital Lifestyle</h2>
+            <p class="text-muted fs-6">NetPulse Broadband is engineered to deliver ultra-fast fiber connectivity, effortless online account management, and reliable 24/7 customer service.</p>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-md-6 col-lg-3">
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h5 class="font-outfit mb-2">Gigabit Fiber Speeds</h5>
+                    <p class="text-muted small mb-0">High-speed symmetrical bandwidth up to 300 Mbps for HD streaming, lag-free gaming, and remote work.</p>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3">
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h5 class="font-outfit mb-2">AI Usage Analytics</h5>
+                    <p class="text-muted small mb-0">Smart usage profiling monitors your bandwidth and recommends optimal plan upgrades automatically.</p>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3">
+                <div class="feature-card">
+                    <div class="feature-icon">💳</div>
+                    <h5 class="font-outfit mb-2">Instant Online Recharge</h5>
+                    <p class="text-muted small mb-0">Pay securely using UPI, Credit/Debit cards, or Net Banking with instant email transaction receipts.</p>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3">
+                <div class="feature-card">
+                    <div class="feature-icon">🎧</div>
+                    <h5 class="font-outfit mb-2">24/7 Dedicated Support</h5>
+                    <p class="text-muted small mb-0">Round-the-clock telephone hotline and instant WhatsApp message support to resolve queries fast.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Our Plans Section -->
+    <section id="plans" class="pt-5 mb-5">
+        <div class="text-center mb-5">
+            <span class="tag">Broadband Plans</span>
+            <h2 class="display-6 font-outfit mt-2 mb-3">High-Speed Plans Tailored for You</h2>
+            <p class="text-muted fs-6">Transparent pricing with zero hidden fees. Switch or renew your plan anytime.</p>
+        </div>
+
+        <div class="row g-4 justify-content-center">
+            {% for plan in plans %}
+            <div class="col-md-6 col-lg-4 d-flex align-items-stretch">
+                <div class="plan-card-landing w-100 {% if loop.index == 2 or plan.name|lower == 'home plus' %}popular{% endif %}">
+                    {% if loop.index == 2 or plan.name|lower == 'home plus' %}
+                    <span class="popular-badge">Most Popular</span>
+                    {% endif %}
+
+                    <div>
+                        <h4 class="font-outfit mb-1 fw-bold text-dark">{{ plan.name }}</h4>
+                        <p class="text-muted mb-3" style="font-size: 0.95rem;">High-speed fiber connectivity for home &amp; office</p>
+
+                        <div class="my-3 pb-3 border-bottom">
+                            <span class="display-5 font-outfit fw-bold text-dark">₹{{ plan.price|int }}</span>
+                            <span class="text-muted" style="font-size: 0.95rem;">/ {{ plan.validity_days }} days</span>
+                        </div>
+
+                        <ul class="list-unstyled mb-4 space-y-2 text-dark" style="font-size: 0.975rem;">
+                            <li class="mb-2">⚡ <strong>Speed:</strong> {{ plan.speed }}</li>
+                            <li class="mb-2">📊 <strong>Data Limit:</strong> {{ plan.data_limit }}</li>
+                            <li class="mb-2">📅 <strong>Validity:</strong> {{ plan.validity_days }} Days</li>
+                            <li class="mb-2">🔒 <strong>Uptime:</strong> 99.9% Guaranteed</li>
+                            <li class="mb-2">✉️ <strong>Alerts:</strong> Auto Renewal Reminders</li>
+                        </ul>
+                    </div>
+
+                    <div class="pt-3">
+                        <a href="{{ url_for('register') }}" class="btn {% if loop.index == 2 or plan.name|lower == 'home plus' %}btn-signal{% else %}btn-outline-dark{% endif %} w-100 py-2 font-outfit fw-semibold">
+                            Select {{ plan.name }} &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- 24/7 Service & Customer Support Section -->
+    <section id="support" class="pt-5 mb-5">
+        <div class="card-pulse p-4 p-md-5 bg-gradient-dark text-white border-0 position-relative overflow-hidden" style="background: linear-gradient(135deg, #0F172A 0%, #0F3443 100%); border-radius: 24px !important;">
+            <div class="row align-items-center">
+                <div class="col-lg-8">
+                    <span class="badge bg-success bg-opacity-25 text-success px-3 py-2 rounded-pill fw-semibold mb-3">
+                        🟢 Live Customer Support 24/7
+                    </span>
+                    <h2 class="text-white display-6 font-outfit mb-3">Always Here to Help — 24 Hours a Day, 7 Days a Week</h2>
+                    <p class="text-light opacity-90 mb-4 fs-6">
+                        Got questions about your plan, billing, or network performance? Our dedicated support team is available round the clock via direct telephone call or WhatsApp message.
+                    </p>
+                    <div class="d-flex flex-wrap gap-3">
+                        <a href="tel:+919876543210" class="btn btn-light btn-lg font-outfit fw-bold text-dark px-4">
+                            📞 Call Support: +91 98765 43210
+                        </a>
+                        <a href="https://wa.me/919876543210?text=Hi%20NetPulse%20Support,%20I%20need%20assistance" target="_blank" class="btn btn-success btn-lg font-outfit fw-bold px-4">
+                            💬 Message Support on WhatsApp
+                        </a>
+                    </div>
+                </div>
+                <div class="col-lg-4 text-center mt-4 mt-lg-0">
+                    <div class="p-4 bg-white bg-opacity-10 rounded-4 border border-white border-opacity-15 text-start">
+                        <div class="text-white-50 small mb-1">Support Status:</div>
+                        <div class="text-white fw-bold d-flex align-items-center gap-2 mb-3">
+                            <span class="spinner-grow spinner-grow-sm text-success" role="status"></span>
+                            Active &amp; Online 24/7
+                        </div>
+                        <div class="text-white-50 small mb-1">Average Response Time:</div>
+                        <div class="text-white fw-bold mb-3">Under 5 Minutes</div>
+                        <div class="text-white-50 small mb-1">Direct Email:</div>
+                        <div class="text-white fw-semibold small">support@netpulse.com</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Role Navigation Demo Cards -->
+    <section class="pt-5 border-top">
+        <div class="text-center mb-4">
+            <span class="tag">Portal Access</span>
+            <h4 class="font-outfit">Quick Access to System Roles</h4>
+        </div>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <a href="{{ url_for('login') }}" class="role-card">
+                    <div>
+                        <span class="tag">Customer View</span>
+                        <h4 class="mt-2 mb-2">Customer Portal</h4>
+                        <p class="text-muted small mb-0">View subscription details, usage history, upgrade/downgrade suggestions, and pay/renew online.</p>
+                    </div>
+                    <div class="mt-3 text-primary fw-semibold small">Access Portal &rarr;</div>
+                </a>
+            </div>
+            <div class="col-md-4">
+                <a href="{{ url_for('login') }}" class="role-card">
+                    <div>
+                        <span class="tag">Staff View</span>
+                        <h4 class="mt-2 mb-2">Follow-up Queue</h4>
+                        <p class="text-muted small mb-0">Track connections expiring in the next 7 days, dispatch email alerts, and log customer interactions.</p>
+                    </div>
+                    <div class="mt-3 text-primary fw-semibold small">Access Queue &rarr;</div>
+                </a>
+            </div>
+            <div class="col-md-4">
+                <a href="{{ url_for('login') }}" class="role-card">
+                    <div>
+                        <span class="tag">Admin View</span>
+                        <h4 class="mt-2 mb-2">Executive Dashboard</h4>
+                        <p class="text-muted small mb-0">Monitor total revenue, subscriber distribution, payment recovery rate, and usage intelligence.</p>
+                    </div>
+                    <div class="mt-3 text-primary fw-semibold small">Access Dashboard &rarr;</div>
+                </a>
+            </div>
+        </div>
+    </section>
+
 </div>
+
 {% endblock %}

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, date
 from functools import wraps
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import email.utils as email_utils
 from dotenv import load_dotenv
 import pymysql
 import pymysql.cursors
@@ -47,29 +48,74 @@ def send_email_async(to_email, subject, body_html, body_text=None):
             print(f"[Email] Skipped sending to '{to_email}': Invalid recipient or missing SMTP credentials.")
             return
 
-        try:
+        def _build_msg():
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = f"NetPulse Broadband <{EMAIL_HOST_USER}>"
             msg["To"] = to_email
+            msg["Date"] = email_utils.formatdate(localtime=True)
+            msg["Message-ID"] = email_utils.make_msgid(domain="netpulse.com")
 
             if body_text:
-                msg.attach(MIMEText(body_text, "plain"))
-            msg.attach(MIMEText(body_html, "html"))
+                msg.attach(MIMEText(body_text, "plain", "utf-8"))
+            msg.attach(MIMEText(body_html, "html", "utf-8"))
+            return msg
 
-            server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=10)
-            if EMAIL_USE_TLS:
+        # Attempt 1: Standard TLS / configured port connection
+        try:
+            msg = _build_msg()
+            if EMAIL_PORT == 465 or not EMAIL_USE_TLS:
+                server = smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT if EMAIL_PORT == 465 else 465, timeout=12)
+            else:
+                server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=12)
                 server.starttls()
+
             server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
             server.sendmail(EMAIL_HOST_USER, [to_email], msg.as_string())
             server.quit()
-            print(f"[Email] Successfully sent '{subject}' to customer email: {to_email}")
+            print(f"[Email SUCCESS] Sent '{subject}' to recipient: {to_email}")
+            return
         except Exception as e:
-            print(f"[Email] Error sending email to {to_email}: {e}")
+            print(f"[Email WARNING] Primary SMTP attempt ({EMAIL_HOST}:{EMAIL_PORT}) failed for {to_email}: {e}. Retrying with SSL port 465 fallback...")
+
+        # Attempt 2: Fallback to SMTP_SSL port 465 (common for Gmail/Cloud servers)
+        try:
+            msg = _build_msg()
+            server = smtplib.SMTP_SSL(EMAIL_HOST, 465, timeout=12)
+            server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
+            server.sendmail(EMAIL_HOST_USER, [to_email], msg.as_string())
+            server.quit()
+            print(f"[Email SUCCESS via Fallback] Sent '{subject}' to recipient: {to_email}")
+        except Exception as ex2:
+            print(f"[Email ERROR] Both primary and fallback SMTP connections failed for {to_email}: {ex2}")
 
     thread = threading.Thread(target=_send)
     thread.daemon = True
     thread.start()
+
+
+def send_otp_email(to_email, otp_code, username=None):
+    """Sends 6-digit OTP code to user's registered email address for password reset."""
+    subject = f"NetPulse Password Reset OTP Code: {otp_code}"
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #0F3443; margin: 0;">NetPulse Broadband</h2>
+            <p style="color: #64748b; font-size: 14px; margin-top: 5px;">Password Reset Request</p>
+        </div>
+        <p>Hello{" <strong>" + username + "</strong>" if username else ""},</p>
+        <p>We received a request to reset the password for your NetPulse account associated with <strong>{to_email}</strong>.</p>
+        <p>Your 6-digit One-Time Password (OTP) is:</p>
+        <div style="background: linear-gradient(135deg, #0F3443 0%, #34E0A1 100%); padding: 18px; border-radius: 10px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #ffffff;">{otp_code}</span>
+        </div>
+        <p style="color: #64748b; font-size: 13px;">This OTP is valid for <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email or contact support.</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">NetPulse 24/7 Support Hotline: +91 98765 43210 | support@netpulse.com</p>
+    </div>
+    """
+    send_email_async(to_email, subject, html_content)
+
 
 
 def send_welcome_email(to_email, customer_name, connection_id, plan_name):
@@ -115,7 +161,25 @@ def send_recharge_receipt(to_email, customer_name, connection_id, plan_name, amo
 
 
 def send_expiry_reminder(to_email, customer_name, connection_id, due_date, price, days_left=7, usage_info=None):
-    subject = f"Urgent: 7-Day Renewal Reminder for Connection {connection_id}"
+    """Sends formatted renewal alert email specifically tailored for 7-day advance notice or final expiry day."""
+    if days_left == 0:
+        subject = f"🚨 FINAL NOTICE: Your NetPulse Plan Expires TODAY (Connection {connection_id})"
+        urgency_title = "FINAL EXPIRY NOTICE — Action Required Today"
+        urgency_banner = f"""
+        <div style="background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 15px; margin: 15px 0; border-radius: 6px;">
+            <p style="margin: 0; color: #991b1b;"><strong>⚠️ Plan Expires Today ({due_date}):</strong></p>
+            <p style="margin: 5px 0 0 0; color: #991b1b;">Your broadband service will be interrupted at midnight unless recharged today. Current Renewal Price: ₹{price}</p>
+        </div>
+        """
+    else:
+        subject = f"Urgent: 7-Day Renewal Reminder for Connection {connection_id}"
+        urgency_title = "NetPulse 7-Day Renewal Notice"
+        urgency_banner = f"""
+        <div style="background-color: #fff8e6; border-left: 4px solid #f59e0b; padding: 15px; margin: 15px 0; border-radius: 6px;">
+            <p style="margin: 0; color: #92400e;"><strong>Current Renewal Price:</strong> ₹{price}</p>
+            <p style="margin: 5px 0 0 0; color: #92400e;">Please recharge online before your due date to avoid service interruption.</p>
+        </div>
+        """
     
     recommendation_html = ""
     if usage_info:
@@ -140,26 +204,27 @@ def send_expiry_reminder(to_email, customer_name, connection_id, due_date, price
 
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #0F3443;">NetPulse 7-Day Renewal Notice</h2>
+        <h2 style="color: #0F3443;">{urgency_title}</h2>
         <p>Dear <strong>{customer_name}</strong>,</p>
-        <p>This is a notification that your NetPulse Broadband plan for connection <strong>{connection_id}</strong> will expire in <strong>{days_left} day(s)</strong> on <strong>{due_date}</strong>.</p>
+        <p>This is an automated notification regarding your NetPulse Broadband connection <strong>{connection_id}</strong> ({'expiring TODAY' if days_left == 0 else f'expiring in {days_left} day(s)'} on <strong>{due_date}</strong>).</p>
         
-        <div style="background-color: #fff8e6; border-left: 4px solid #f59e0b; padding: 15px; margin: 15px 0; border-radius: 6px;">
-            <p style="margin: 0; color: #92400e;"><strong>Current Renewal Price:</strong> ₹{price}</p>
-            <p style="margin: 5px 0 0 0; color: #92400e;">Please recharge online before your due date to avoid service interruption.</p>
-        </div>
-
+        {urgency_banner}
         {recommendation_html}
 
-        <p>Log in to your portal to recharge instantly using UPI, Card, or Net Banking.</p>
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">NetPulse Support Team</p>
+        <p>Log in to your customer portal to recharge instantly using UPI, Credit/Debit Card, or Net Banking.</p>
+        <p style="color: #666; font-size: 12px; margin-top: 20px;">NetPulse Customer Support | Hotline: +91 98765 43210</p>
     </div>
     """
     send_email_async(to_email, subject, html_content)
 
 
 def check_and_send_7day_renewal_alerts():
-    """Queries all customers expiring within the next 7 days and sends renewal reminder emails including AI usage recommendations to each customer's registered email address."""
+    """
+    Dispatches automated renewal reminder emails STRICTLY on:
+      1) Day 7 before expiry (days_left == 7)
+      2) Final expiry day (days_left == 0)
+    Prevents duplicate sending on intermediate days (days 6, 5, 4, 3, 2, 1) or repeat dispatches.
+    """
     try:
         conn = pymysql.connect(
             host=MYSQL_HOST,
@@ -173,20 +238,33 @@ def check_and_send_7day_renewal_alerts():
         )
         db = MySQLDatabaseWrapper(conn)
         today = datetime.now().date()
-        week_ahead = today + timedelta(days=7)
+        day7_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
+        today_date_str = today.strftime("%Y-%m-%d")
 
+        # Query customers expiring EXACTLY on day 7 (7 days ahead) or EXACTLY today (day 0)
         rows = db.execute(
             """SELECT c.*, p.name AS plan_name, p.price
                FROM customers c JOIN plans p ON c.plan_id = p.id
-               WHERE c.due_date BETWEEN %s AND %s""",
-            (today.strftime("%Y-%m-%d"), week_ahead.strftime("%Y-%m-%d")),
+               WHERE c.due_date = %s OR c.due_date = %s""",
+            (day7_date, today_date_str),
         ).fetchall()
 
         count = 0
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         for cust in rows:
             due_str = str(cust["due_date"])
-            due_date_obj = datetime.strptime(due_str, "%Y-%m-%d").date() if isinstance(due_str, str) else due_str
-            days_left = (due_date_obj - today).days
+            days_left = 7 if due_str == day7_date else 0
+            alert_type = "7_day" if days_left == 7 else "final_day"
+
+            # Check if this exact alert has already been sent for this due_date cycle
+            already_sent = db.execute(
+                "SELECT 1 FROM renewal_alert_logs WHERE customer_id = %s AND due_date = %s AND alert_type = %s",
+                (cust["id"], due_str, alert_type)
+            ).fetchone()
+
+            if already_sent:
+                continue  # Skip sending duplicate email!
 
             email_addr = cust.get("email")
             if email_addr:
@@ -200,14 +278,25 @@ def check_and_send_7day_renewal_alerts():
                     days_left=days_left,
                     usage_info=usage_info
                 )
+
+                # Record in single-send log
+                try:
+                    db.execute(
+                        "INSERT INTO renewal_alert_logs (customer_id, due_date, alert_type, sent_at) VALUES (%s, %s, %s, %s)",
+                        (cust["id"], due_str, alert_type, now_str)
+                    )
+                except Exception:
+                    pass
+
                 count += 1
 
         db.close()
-        print(f"[Renewal Alerts] Successfully dispatched 7-day renewal reminder emails for {count} customer(s).")
+        print(f"[Renewal Alerts] Dispatched strict Day-7 & Final-Day renewal reminder emails for {count} customer(s).")
         return count
     except Exception as e:
-        print(f"[Renewal Alerts] Error running 7-day renewal check: {e}")
+        print(f"[Renewal Alerts] Error running strict renewal check: {e}")
         return 0
+
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +491,29 @@ def init_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """)
 
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            email VARCHAR(100) NOT NULL,
+            otp VARCHAR(6) NOT NULL,
+            created_at DATETIME NOT NULL,
+            expires_at DATETIME NOT NULL,
+            INDEX (email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS renewal_alert_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT NOT NULL,
+            due_date DATE NOT NULL,
+            alert_type VARCHAR(20) NOT NULL,
+            sent_at DATETIME NOT NULL,
+            UNIQUE KEY idx_cust_due_type (customer_id, due_date, alert_type),
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+
     # Check if database has already been seeded or updated by user
     plan_count = db.execute("SELECT COUNT(*) AS n FROM plans").fetchone()["n"]
     if plan_count == 0:
@@ -530,6 +642,7 @@ def inject_user():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    success_msg = request.args.get("success_msg")
     if request.method == "POST":
         login_input = request.form.get("username_or_email", "").strip() or request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -555,7 +668,86 @@ def login():
         else:
             return redirect(url_for("admin_dashboard"))
 
-    return render_template("login.html")
+    return render_template("login.html", success_msg=success_msg)
+
+
+@app.route("/forgot_password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        email_or_username = request.form.get("email_or_username", "").strip()
+        db = get_db()
+        
+        user = db.execute(
+            "SELECT * FROM users WHERE email = %s OR username = %s",
+            (email_or_username, email_or_username)
+        ).fetchone()
+
+        if user is None:
+            return render_template("forgot_password.html", error="No account registered with that email or username.", form_input=email_or_username)
+
+        email = user["email"]
+        otp = f"{random.randint(100000, 999999)}"
+        created_at = datetime.now()
+        expires_at = created_at + timedelta(minutes=15)
+
+        # Clear old active OTPs for this email and record new OTP
+        db.execute("DELETE FROM password_resets WHERE email = %s", (email,))
+        db.execute(
+            "INSERT INTO password_resets (email, otp, created_at, expires_at) VALUES (%s, %s, %s, %s)",
+            (email, otp, created_at.strftime("%Y-%m-%d %H:%M:%S"), expires_at.strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        db.commit()
+
+        # Send OTP email to registered address
+        send_otp_email(email, otp, user["display_name"])
+
+        return redirect(url_for("reset_password", email=email, sent=1))
+
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset_password", methods=["GET", "POST"])
+def reset_password():
+    email = request.args.get("email", "").strip() or request.form.get("email", "").strip()
+    sent = request.args.get("sent") == "1"
+
+    if request.method == "POST":
+        otp_input = request.form.get("otp", "").strip()
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        errors = []
+        if not email or not otp_input or not new_password:
+            errors.append("All fields are required.")
+        if new_password != confirm_password:
+            errors.append("New passwords do not match.")
+        if len(new_password) < 4:
+            errors.append("Password must be at least 4 characters long.")
+
+        if errors:
+            return render_template("reset_password.html", email=email, errors=errors)
+
+        db = get_db()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        record = db.execute(
+            "SELECT * FROM password_resets WHERE email = %s AND otp = %s AND expires_at >= %s",
+            (email, otp_input, now_str)
+        ).fetchone()
+
+        if not record:
+            return render_template("reset_password.html", email=email, errors=["Invalid or expired OTP code. Please request a new OTP."])
+
+        # Password reset verified! Update user's password
+        new_hash = generate_password_hash(new_password)
+        db.execute("UPDATE users SET password_hash = %s WHERE email = %s", (new_hash, email))
+        db.execute("DELETE FROM password_resets WHERE email = %s", (email,))
+        db.commit()
+
+        return redirect(url_for("login", success_msg="Password reset successful! You can now log in with your new password."))
+
+    return render_template("reset_password.html", email=email, sent=sent)
+
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -611,7 +803,7 @@ def register():
 
         plan = db.execute("SELECT * FROM plans WHERE id = %s", (plan_id,)).fetchone()
         today = datetime.now()
-        due = today + timedelta(days=plan["validity_days"])
+        due = today  # Initial registration starts pre-activation; activation payment sets exact plan validity
 
         cur = db.execute(
             "INSERT INTO customers (name, connection_id, email, address, plan_id, start_date, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -662,33 +854,33 @@ def get_usage_recommendation(db, customer_id, current_plan_id):
         "SELECT COALESCE(SUM(data_consumed), 0) AS total FROM usage_logs WHERE customer_id = %s",
         (customer_id,),
     ).fetchone()
-    usage = usage_row["total"] if usage_row else 0
+    usage = float(usage_row["total"]) if usage_row else 0.0
 
-    limit = cust_plan["data_limit_gb"] or 1
-    ratio = usage / limit
+    limit = float(cust_plan["data_limit_gb"] or 1.0)
+    ratio = usage / limit if limit > 0 else 0.0
 
     recommendation = "No change"
     suggested_plan = None
-    reason = f"You're using {round(usage)} GB against your plan's {round(limit)} GB reference limit — comfortably within plan."
+    reason = f"Averaging {usage:.1f} GB/mo ({round(ratio * 100)}% of {limit:.0f} GB cap) — Usage is optimal for {cust_plan['name']}."
 
     if ratio >= 0.8 and idx + 1 < len(plan_order):
         suggested_plan = plan_order[idx + 1]
         recommendation = "Upgrade"
         reason = (
-            f"You're averaging {round(usage)} GB/month, {round(ratio * 100)}% of your "
-            f"{cust_plan['name']} limit — you may hit caps or see slower speeds."
+            f"Averaging {usage:.1f} GB/mo ({round(ratio * 100)}% of {limit:.0f} GB cap) — "
+            f"Approaching/exceeding limit. Recommend upgrading to {suggested_plan['name']}."
         )
     elif ratio <= 0.35 and idx - 1 >= 0:
         suggested_plan = plan_order[idx - 1]
         recommendation = "Downgrade"
         reason = (
-            f"You're averaging only {round(usage)} GB/month, {round(ratio * 100)}% of your "
-            f"{cust_plan['name']} limit — you could save money on a smaller plan."
+            f"Averaging only {usage:.1f} GB/mo ({round(ratio * 100)}% of {limit:.0f} GB cap) — "
+            f"Low consumption. Recommend downgrading to {suggested_plan['name']} to save costs."
         )
 
     return {
         "usage_gb": round(usage, 1),
-        "limit_gb": round(limit),
+        "limit_gb": round(limit, 1),
         "ratio_pct": round(ratio * 100),
         "recommendation": recommendation,
         "suggested_plan": suggested_plan,
@@ -704,17 +896,10 @@ def get_usage_recommendation(db, customer_id, current_plan_id):
 
 @app.route("/")
 def home():
-    if "user_id" not in session:
-        return redirect(url_for("login"))
-    role = session.get("role")
-    if role == "customer":
-        cust_id = session.get("customer_id")
-        if cust_id:
-            return redirect(url_for("customer_view", customer_id=cust_id))
-        return redirect(url_for("login"))
-    elif role == "staff":
-        return redirect(url_for("expiry_list"))
-    return redirect(url_for("admin_dashboard"))
+    db = get_db()
+    plans = db.execute("SELECT * FROM plans ORDER BY price ASC").fetchall()
+    return render_template("home.html", plans=plans)
+
 
 
 @app.route("/customers")
@@ -937,6 +1122,54 @@ def add_staff():
     return redirect(url_for("admin_dashboard"))
 
 
+@app.route("/admin/delete_customer/<int:customer_id>", methods=["POST"])
+@login_required(roles=["admin", "staff"])
+def delete_customer(customer_id):
+    db = get_db()
+    # Delete associated user account first
+    db.execute("DELETE FROM users WHERE customer_id = %s", (customer_id,))
+    # Delete customer record (cascades transactions and usage logs)
+    db.execute("DELETE FROM customers WHERE id = %s", (customer_id,))
+    db.commit()
+    print(f"[Admin/Staff] Permanently deleted customer ID {customer_id}")
+    return redirect(request.referrer or url_for("customer_lookup"))
+
+
+@app.route("/admin/delete_user/<int:user_id>", methods=["POST"])
+@login_required(roles=["admin"])
+def delete_user(user_id):
+    if session.get("user_id") == user_id:
+        # Prevent admin from deleting their own active session
+        return redirect(url_for("admin_dashboard"))
+
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
+    if user:
+        if user["customer_id"]:
+            db.execute("DELETE FROM customers WHERE id = %s", (user["customer_id"],))
+        db.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        db.commit()
+        print(f"[Admin] Permanently deleted user account ID {user_id} ({user['username']})")
+
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/delete_plan/<int:plan_id>", methods=["POST"])
+@login_required(roles=["admin"])
+def delete_plan(plan_id):
+    db = get_db()
+    active_custs = db.execute("SELECT COUNT(*) AS n FROM customers WHERE plan_id = %s", (plan_id,)).fetchone()["n"]
+    if active_custs > 0:
+        fallback = db.execute("SELECT id FROM plans WHERE id != %s LIMIT 1", (plan_id,)).fetchone()
+        if fallback:
+            db.execute("UPDATE customers SET plan_id = %s WHERE plan_id = %s", (fallback["id"], plan_id))
+    
+    db.execute("DELETE FROM plans WHERE id = %s", (plan_id,))
+    db.commit()
+    print(f"[Admin] Permanently deleted broadband plan ID {plan_id}")
+    return redirect(url_for("admin_dashboard"))
+
+
 @app.route("/api/staff_list")
 @login_required(roles=["admin"])
 def api_staff_list():
@@ -944,7 +1177,36 @@ def api_staff_list():
     users = db.execute(
         "SELECT id, username, display_name, email, role FROM users WHERE role IN ('staff', 'admin') ORDER BY id DESC"
     ).fetchall()
-    return jsonify(users)
+    return jsonify({"users": users, "current_user_id": session.get("user_id")})
+
+
+@app.route("/admin")
+@login_required(roles=["admin"])
+def admin_dashboard():
+    db = get_db()
+    customers = db.execute(
+        """SELECT c.id, c.name, c.connection_id, c.email, p.name AS plan_name
+           FROM customers c JOIN plans p ON c.plan_id = p.id ORDER BY c.name ASC"""
+    ).fetchall()
+    plans = db.execute("SELECT id, name, speed, price FROM plans ORDER BY id ASC").fetchall()
+    staff_members = db.execute(
+        "SELECT id, username, display_name, role FROM users WHERE role IN ('staff', 'admin') ORDER BY display_name ASC"
+    ).fetchall()
+    return render_template(
+        "admin.html",
+        customers=customers,
+        plans=plans,
+        staff_members=staff_members,
+        current_user_id=session.get("user_id")
+    )
+@login_required(roles=["admin"])
+def api_staff_list():
+    db = get_db()
+    users = db.execute(
+        "SELECT id, username, display_name, email, role FROM users WHERE role IN ('staff', 'admin') ORDER BY id DESC"
+    ).fetchall()
+    return jsonify({"users": users, "current_user_id": session.get("user_id")})
+
 
 
 @app.route("/expiry")
@@ -1020,12 +1282,6 @@ def followup(customer_id):
         )
 
     return redirect(url_for("expiry_list"))
-
-
-@app.route("/admin")
-@login_required(roles=["admin"])
-def admin_dashboard():
-    return render_template("admin.html")
 
 
 # ---------------------------------------------------------------------------
@@ -1107,10 +1363,13 @@ def api_plan_recommendations():
         info = get_usage_recommendation(db, cust["id"], cust["plan_id"])
         results.append(
             {
+                "customer_name": cust["name"],
                 "customer": cust["name"],
                 "connection_id": cust["connection_id"],
                 "current_plan": cust["plan_name"],
                 "monthly_usage_gb": info["usage_gb"],
+                "avg_gb": info["usage_gb"],
+                "usage_gb": info["usage_gb"],
                 "recommendation": info["recommendation"],
                 "suggested_plan": info["suggested_plan"]["name"] if info["suggested_plan"] else None,
                 "reason": info["reason"],

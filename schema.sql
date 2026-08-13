@@ -61,3 +61,26 @@ CREATE TABLE IF NOT EXISTS users (
     customer_id INT NULL,                     -- set when role = 'customer'
     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 6. Password Resets (OTP Storage)
+CREATE TABLE IF NOT EXISTS password_resets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(100) NOT NULL,
+    otp VARCHAR(6) NOT NULL,
+    created_at DATETIME NOT NULL,
+    expires_at DATETIME NOT NULL,
+    INDEX (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 7. Renewal Alert Logs (Strict Single-Send Tracking for Day 7 & Final Expiry Day)
+CREATE TABLE IF NOT EXISTS renewal_alert_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    due_date DATE NOT NULL,
+    alert_type VARCHAR(20) NOT NULL,
+    sent_at DATETIME NOT NULL,
+    UNIQUE KEY idx_cust_due_type (customer_id, due_date, alert_type),
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
