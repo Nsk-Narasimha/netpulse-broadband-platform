@@ -12,7 +12,7 @@ import email.utils as email_utils
 from dotenv import load_dotenv
 import pymysql
 import pymysql.cursors
-from flask import Flask, render_template, request, redirect, url_for, jsonify, g, session, abort
+from flask import Flask, render_template, request, redirect, url_for, jsonify, g, session, abort, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # Load environment variables from .env file
@@ -41,17 +41,36 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@yourdomain.c
 # Email Helper Functions (Async SMTP to Registered Customer Email)
 # ---------------------------------------------------------------------------
 
+def get_email_config():
+    host = os.environ.get("EMAIL_HOST", "smtp.gmail.com").strip()
+    try:
+        port = int(os.environ.get("EMAIL_PORT", 587))
+    except Exception:
+        port = 587
+    use_tls = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+    
+    user = os.environ.get("OUTBOUND_EMAIL_HOST_USER") or os.environ.get("EMAIL_HOST_USER", "knsknsk10@gmail.com")
+    user = user.strip() if user else ""
+    
+    pwd = os.environ.get("OUTBOUND_EMAIL_HOST_PASSWORD") or os.environ.get("EMAIL_HOST_PASSWORD", "")
+    pwd = pwd.replace(" ", "").strip() if pwd else ""
+    
+    return host, port, use_tls, user, pwd
+
+
 def send_email_async(to_email, subject, body_html, body_text=None):
-    """Sends outbound email asynchronously to the recipient's specific registered email address."""
+    """Sends outbound email asynchronously with SSL (465) & TLS (587) fallback for deployed cloud servers."""
     def _send():
-        if not to_email or not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
-            print(f"[Email] Skipped sending to '{to_email}': Invalid recipient or missing SMTP credentials.")
+        host, port, use_tls, user, pwd = get_email_config()
+        
+        if not to_email or not user or not pwd:
+            print(f"[Email SKIPPED] Cannot send to '{to_email}': Missing recipient or SMTP credentials (User: '{user}').")
             return
 
         def _build_msg():
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = f"NetPulse Broadband <{EMAIL_HOST_USER}>"
+            msg["From"] = f"NetPulse Broadband <{user}>"
             msg["To"] = to_email
             msg["Date"] = email_utils.formatdate(localtime=True)
             msg["Message-ID"] = email_utils.make_msgid(domain="netpulse.com")
@@ -61,33 +80,46 @@ def send_email_async(to_email, subject, body_html, body_text=None):
             msg.attach(MIMEText(body_html, "html", "utf-8"))
             return msg
 
-        # Attempt 1: Standard TLS / configured port connection
+        # Delivery Attempt 1: Port 465 SSL (Highest compatibility for cloud providers like Render, AWS, Heroku, GCP)
         try:
             msg = _build_msg()
-            if EMAIL_PORT == 465 or not EMAIL_USE_TLS:
-                server = smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT if EMAIL_PORT == 465 else 465, timeout=12)
-            else:
-                server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=12)
-                server.starttls()
-
-            server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
-            server.sendmail(EMAIL_HOST_USER, [to_email], msg.as_string())
+            server = smtplib.SMTP_SSL(host, 465, timeout=8)
+            server.login(user, pwd)
+            server.sendmail(user, [to_email], msg.as_string())
             server.quit()
-            print(f"[Email SUCCESS] Sent '{subject}' to recipient: {to_email}")
+            print(f"[Email SUCCESS via SSL:465] Sent '{subject}' to recipient: {to_email}")
             return
-        except Exception as e:
-            print(f"[Email WARNING] Primary SMTP attempt ({EMAIL_HOST}:{EMAIL_PORT}) failed for {to_email}: {e}. Retrying with SSL port 465 fallback...")
+        except Exception as e1:
+            print(f"[Email INFO] SSL Port 465 attempt failed for {to_email}: {e1}. Retrying with TLS Port 587...")
 
-        # Attempt 2: Fallback to SMTP_SSL port 465 (common for Gmail/Cloud servers)
+        # Delivery Attempt 2: Port 587 TLS
         try:
             msg = _build_msg()
-            server = smtplib.SMTP_SSL(EMAIL_HOST, 465, timeout=12)
-            server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
-            server.sendmail(EMAIL_HOST_USER, [to_email], msg.as_string())
+            server = smtplib.SMTP(host, 587, timeout=8)
+            server.starttls()
+            server.login(user, pwd)
+            server.sendmail(user, [to_email], msg.as_string())
             server.quit()
-            print(f"[Email SUCCESS via Fallback] Sent '{subject}' to recipient: {to_email}")
-        except Exception as ex2:
-            print(f"[Email ERROR] Both primary and fallback SMTP connections failed for {to_email}: {ex2}")
+            print(f"[Email SUCCESS via TLS:587] Sent '{subject}' to recipient: {to_email}")
+            return
+        except Exception as e2:
+            print(f"[Email INFO] TLS Port 587 attempt failed for {to_email}: {e2}. Retrying configured port {port}...")
+
+        # Delivery Attempt 3: Configured custom port
+        try:
+            msg = _build_msg()
+            if port == 465:
+                server = smtplib.SMTP_SSL(host, port, timeout=8)
+            else:
+                server = smtplib.SMTP(host, port, timeout=8)
+                if use_tls:
+                    server.starttls()
+            server.login(user, pwd)
+            server.sendmail(user, [to_email], msg.as_string())
+            server.quit()
+            print(f"[Email SUCCESS via Port {port}] Sent '{subject}' to recipient: {to_email}")
+        except Exception as e3:
+            print(f"[Email ERROR] All outbound SMTP delivery attempts failed for recipient {to_email}: SSL(465): {e1} | TLS(587): {e2} | Config({port}): {e3}")
 
     thread = threading.Thread(target=_send)
     thread.daemon = True
@@ -701,6 +733,11 @@ def forgot_password():
         # Send OTP email to registered address
         send_otp_email(email, otp, user["display_name"])
 
+        # Store latest OTP in session for backup verification on cloud deployments
+        session["last_reset_otp"] = otp
+        session["last_reset_email"] = email
+
+        flash(f"A 6-digit OTP code has been dispatched to {email}.", "success")
         return redirect(url_for("reset_password", email=email, sent=1))
 
     return render_template("forgot_password.html")
@@ -710,6 +747,10 @@ def forgot_password():
 def reset_password():
     email = request.args.get("email", "").strip() or request.form.get("email", "").strip()
     sent = request.args.get("sent") == "1"
+
+    backup_otp = None
+    if session.get("last_reset_email") == email:
+        backup_otp = session.get("last_reset_otp")
 
     if request.method == "POST":
         otp_input = request.form.get("otp", "").strip()
@@ -725,7 +766,7 @@ def reset_password():
             errors.append("Password must be at least 4 characters long.")
 
         if errors:
-            return render_template("reset_password.html", email=email, errors=errors)
+            return render_template("reset_password.html", email=email, sent=sent, errors=errors, backup_otp=backup_otp)
 
         db = get_db()
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -736,7 +777,7 @@ def reset_password():
         ).fetchone()
 
         if not record:
-            return render_template("reset_password.html", email=email, errors=["Invalid or expired OTP code. Please request a new OTP."])
+            return render_template("reset_password.html", email=email, sent=sent, errors=["Invalid or expired OTP code. Please request a new OTP."], backup_otp=backup_otp)
 
         # Password reset verified! Update user's password
         new_hash = generate_password_hash(new_password)
@@ -744,9 +785,13 @@ def reset_password():
         db.execute("DELETE FROM password_resets WHERE email = %s", (email,))
         db.commit()
 
+        session.pop("last_reset_otp", None)
+        session.pop("last_reset_email", None)
+
+        flash("Password reset successful! You can now log in with your new password.", "success")
         return redirect(url_for("login", success_msg="Password reset successful! You can now log in with your new password."))
 
-    return render_template("reset_password.html", email=email, sent=sent)
+    return render_template("reset_password.html", email=email, sent=sent, backup_otp=backup_otp)
 
 
 
@@ -777,8 +822,8 @@ def register():
         errors = []
         if not name or not connection_id or not username or not password or not email:
             errors.append("Name, connection ID, email address, username, and password are all required.")
-        elif not re.match(r"^[A-Za-z\s.'-]{2,}$", name):
-            errors.append("Full Name must contain letters and spaces only (numbers are not allowed).")
+        elif not re.match(r"^[A-Za-z0-9\s.'-]{2,}$", name):
+            errors.append("Full Name must be at least 2 characters long.")
 
         if plan_id is None:
             errors.append("Please choose a plan.")
@@ -819,6 +864,8 @@ def register():
 
         # Send welcome email notification strictly to the registrant's email address
         send_welcome_email(email, name, connection_id, plan["name"])
+
+        flash(f"Welcome to NetPulse Broadband, {name}! Registration completed successfully.", "success")
 
         # Log new customer in automatically
         user = db.execute("SELECT * FROM users WHERE username = %s", (username,)).fetchone()
@@ -1072,12 +1119,18 @@ def add_plan():
         price = 0.0
 
     if name and speed and price > 0:
-        db.execute(
-            "INSERT INTO plans (name, speed, data_limit, data_limit_gb, validity_days, price) VALUES (%s, %s, %s, %s, %s, %s)",
-            (name, speed, data_limit, data_limit_gb, validity_days, price),
-        )
-        db.commit()
-        print(f"[Admin] Permanently added new plan: {name} (Rs. {price})")
+        try:
+            db.execute(
+                "INSERT INTO plans (name, speed, data_limit, data_limit_gb, validity_days, price) VALUES (%s, %s, %s, %s, %s, %s)",
+                (name, speed, data_limit, data_limit_gb, validity_days, price),
+            )
+            db.commit()
+            flash(f"Successfully created broadband plan: '{name}' (₹{price})", "success")
+            print(f"[Admin] Permanently added new plan: {name} (Rs. {price})")
+        except Exception as e:
+            flash(f"Failed to create plan: {str(e)}", "danger")
+    else:
+        flash("Please fill all required plan fields with valid values.", "danger")
 
     return redirect(url_for("admin_dashboard"))
 
@@ -1095,29 +1148,36 @@ def add_staff():
 
     errors = []
     if not display_name or not username or not email or not password:
-        errors.append("All fields are required.")
-    elif not re.match(r"^[A-Za-z\s.'-]{2,}$", display_name):
-        errors.append("Full Name must contain letters and spaces only.")
+        errors.append("All fields (Full Name, Username, Email, Password) are required.")
+    elif len(display_name) < 2:
+        errors.append("Full Name must be at least 2 characters long.")
 
-    if len(password) < 4:
-        errors.append("Password must be at least 4 characters.")
+    if password and len(password) < 4:
+        errors.append("Password must be at least 4 characters long.")
 
     if not errors:
         existing_username = db.execute("SELECT 1 FROM users WHERE username = %s", (username,)).fetchone()
         existing_email = db.execute("SELECT 1 FROM users WHERE email = %s", (email,)).fetchone()
 
         if existing_username:
-            errors.append(f"Username '{username}' is already taken.")
+            errors.append(f"Username '{username}' is already taken. Please choose a different username.")
         if existing_email:
-            errors.append(f"Email '{email}' is already registered.")
+            errors.append(f"Email '{email}' is already registered. Please use a unique email address.")
 
-    if not errors:
-        db.execute(
-            "INSERT INTO users (username, password_hash, role, display_name, email, customer_id) VALUES (%s, %s, %s, %s, %s, %s)",
-            (username, generate_password_hash(password), role, display_name, email, None),
-        )
-        db.commit()
-        print(f"[Admin] Successfully created new {role} user: {username} ({email})")
+    if errors:
+        for err in errors:
+            flash(err, "danger")
+    else:
+        try:
+            db.execute(
+                "INSERT INTO users (username, password_hash, role, display_name, email, customer_id) VALUES (%s, %s, %s, %s, %s, %s)",
+                (username, generate_password_hash(password), role, display_name, email, None),
+            )
+            db.commit()
+            flash(f"Successfully created new {role.title()} user: {display_name} (@{username})", "success")
+            print(f"[Admin] Successfully created new {role} user: {username} ({email})")
+        except Exception as e:
+            flash(f"Database error while adding staff member: {str(e)}", "danger")
 
     return redirect(url_for("admin_dashboard"))
 
@@ -1126,12 +1186,16 @@ def add_staff():
 @login_required(roles=["admin", "staff"])
 def delete_customer(customer_id):
     db = get_db()
-    # Delete associated user account first
-    db.execute("DELETE FROM users WHERE customer_id = %s", (customer_id,))
-    # Delete customer record (cascades transactions and usage logs)
-    db.execute("DELETE FROM customers WHERE id = %s", (customer_id,))
-    db.commit()
-    print(f"[Admin/Staff] Permanently deleted customer ID {customer_id}")
+    try:
+        # Delete associated user account first
+        db.execute("DELETE FROM users WHERE customer_id = %s", (customer_id,))
+        # Delete customer record (cascades transactions and usage logs)
+        db.execute("DELETE FROM customers WHERE id = %s", (customer_id,))
+        db.commit()
+        flash(f"Permanently deleted customer account (ID {customer_id}).", "success")
+        print(f"[Admin/Staff] Permanently deleted customer ID {customer_id}")
+    except Exception as e:
+        flash(f"Failed to delete customer: {str(e)}", "danger")
     return redirect(request.referrer or url_for("customer_lookup"))
 
 
@@ -1140,16 +1204,23 @@ def delete_customer(customer_id):
 def delete_user(user_id):
     if session.get("user_id") == user_id:
         # Prevent admin from deleting their own active session
+        flash("You cannot delete your own active administrator account.", "warning")
         return redirect(url_for("admin_dashboard"))
 
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
     if user:
-        if user["customer_id"]:
-            db.execute("DELETE FROM customers WHERE id = %s", (user["customer_id"],))
-        db.execute("DELETE FROM users WHERE id = %s", (user_id,))
-        db.commit()
-        print(f"[Admin] Permanently deleted user account ID {user_id} ({user['username']})")
+        try:
+            if user["customer_id"]:
+                db.execute("DELETE FROM customers WHERE id = %s", (user["customer_id"],))
+            db.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            db.commit()
+            flash(f"Permanently deleted account: {user['display_name']} (@{user['username']})", "success")
+            print(f"[Admin] Permanently deleted user account ID {user_id} ({user['username']})")
+        except Exception as e:
+            flash(f"Failed to delete user account: {str(e)}", "danger")
+    else:
+        flash("User account not found.", "danger")
 
     return redirect(url_for("admin_dashboard"))
 
@@ -1158,15 +1229,20 @@ def delete_user(user_id):
 @login_required(roles=["admin"])
 def delete_plan(plan_id):
     db = get_db()
-    active_custs = db.execute("SELECT COUNT(*) AS n FROM customers WHERE plan_id = %s", (plan_id,)).fetchone()["n"]
-    if active_custs > 0:
-        fallback = db.execute("SELECT id FROM plans WHERE id != %s LIMIT 1", (plan_id,)).fetchone()
-        if fallback:
-            db.execute("UPDATE customers SET plan_id = %s WHERE plan_id = %s", (fallback["id"], plan_id))
-    
-    db.execute("DELETE FROM plans WHERE id = %s", (plan_id,))
-    db.commit()
-    print(f"[Admin] Permanently deleted broadband plan ID {plan_id}")
+    try:
+        active_custs = db.execute("SELECT COUNT(*) AS n FROM customers WHERE plan_id = %s", (plan_id,)).fetchone()["n"]
+        if active_custs > 0:
+            fallback = db.execute("SELECT id FROM plans WHERE id != %s LIMIT 1", (plan_id,)).fetchone()
+            if fallback:
+                db.execute("UPDATE customers SET plan_id = %s WHERE plan_id = %s", (fallback["id"], plan_id))
+        
+        db.execute("DELETE FROM plans WHERE id = %s", (plan_id,))
+        db.commit()
+        flash(f"Permanently deleted broadband plan (ID {plan_id}).", "success")
+        print(f"[Admin] Permanently deleted broadband plan ID {plan_id}")
+    except Exception as e:
+        flash(f"Failed to delete plan: {str(e)}", "danger")
+
     return redirect(url_for("admin_dashboard"))
 
 
@@ -1199,13 +1275,6 @@ def admin_dashboard():
         staff_members=staff_members,
         current_user_id=session.get("user_id")
     )
-@login_required(roles=["admin"])
-def api_staff_list():
-    db = get_db()
-    users = db.execute(
-        "SELECT id, username, display_name, email, role FROM users WHERE role IN ('staff', 'admin') ORDER BY id DESC"
-    ).fetchall()
-    return jsonify({"users": users, "current_user_id": session.get("user_id")})
 
 
 

@@ -57,6 +57,16 @@
     </nav>
 
     <main class="{% block container_class %}container py-4{% endblock %}">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ 'danger' if category in ['error', 'danger'] else category }} alert-dismissible fade show font-outfit shadow-sm rounded-3 mb-4" role="alert">
+                <strong>{{ '⚠️ Error:' if category in ['error', 'danger'] else ('✨ Success:' if category == 'success' else 'ℹ️ Notice:') }}</strong> {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
         {% block content %}{% endblock %}
     </main>
 
